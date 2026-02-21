@@ -1,33 +1,41 @@
 import React, { useState, useEffect } from 'react';
-import { Activity } from 'lucide-react';
+import { Activity, Moon, Sun } from 'lucide-react';
 import LocationCard from './components/LocationCard';
 import TelemetryCard from './components/TelemetryCard';
 import ControlCard from './components/ControlCard';
-import { useMockTelemetry } from './services/mockService';
+import GeofenceMap from './components/GeofenceMap';
+import LiveMap from './components/LiveMap';
+import { useFirebaseTelemetry, setImmobilizerState } from './services/firebaseService';
 
 function App() {
     const [telemetry, setTelemetry] = useState(null);
     const [connected, setConnected] = useState(false);
     const [immobilizerActive, setImmobilizerActive] = useState(false);
+    const [darkMode, setDarkMode] = useState(false);
 
-    // Initialize Data Simulation
+    // Apply / remove dark theme on the root element
     useEffect(() => {
-        // In the future, this is where we will listen to Firebase instead
-        const { startSimulation, stopSimulation } = useMockTelemetry((newData) => {
+        document.documentElement.setAttribute('data-theme', darkMode ? 'dark' : 'light');
+    }, [darkMode]);
+
+    // Initialize Firebase connection
+    useEffect(() => {
+        const { startListening } = useFirebaseTelemetry((newData) => {
             setTelemetry(newData);
             setConnected(true);
+            if (newData && typeof newData.immoActive !== 'undefined') {
+                setImmobilizerActive(newData.immoActive);
+            }
         });
-
-        startSimulation();
-
-        // Cleanup
-        return () => stopSimulation();
+        const unsubscribe = startListening();
+        return () => { if (unsubscribe) unsubscribe(); };
     }, []);
 
     const handleImmobilizerToggle = (newState) => {
         setImmobilizerActive(newState);
-        // In the future, this is where we write `immobilizer: newState` to Firebase
-        console.log(`Sending command to MCU: Immobilizer ${newState ? 'ON' : 'OFF'}`);
+        setImmobilizerState(newState)
+            .then(() => console.log(`Immobilizer ${newState ? 'ON' : 'OFF'}`))
+            .catch((err) => console.error("Firebase error:", err));
     };
 
     if (!telemetry) {
@@ -40,16 +48,40 @@ function App() {
 
     return (
         <div className="dashboard-container">
-            {/* Header section (extracted from plan) */}
             <header className="dashboard-header">
                 <div className="dashboard-title">
                     <Activity size={28} style={{ color: 'var(--accent-blue)' }} />
-                    Smart Telematics Dashboard
+                    Aegis
                 </div>
 
-                <div className={`connection-status ${!connected ? 'offline' : ''}`}>
-                    <div className="status-dot pulse"></div>
-                    {connected ? 'System Connected' : 'System Offline'}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                    {/* Dark Mode Toggle */}
+                    <button
+                        onClick={() => setDarkMode(d => !d)}
+                        title={darkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+                        style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            width: '38px',
+                            height: '38px',
+                            borderRadius: '50%',
+                            border: '1.5px solid var(--border-color)',
+                            background: 'var(--bg-card)',
+                            cursor: 'pointer',
+                            color: 'var(--text-muted)',
+                            transition: 'all 0.3s ease',
+                            flexShrink: 0,
+                        }}
+                    >
+                        {darkMode ? <Sun size={18} /> : <Moon size={18} />}
+                    </button>
+
+                    {/* Connection Pill */}
+                    <div className={`connection-status ${!connected ? 'offline' : ''}`}>
+                        <div className="status-dot pulse"></div>
+                        {connected ? 'System Connected' : 'System Offline'}
+                    </div>
                 </div>
             </header>
 
@@ -67,6 +99,18 @@ function App() {
                         onToggle={handleImmobilizerToggle}
                     />
                 </div>
+
+                {/* Full-width Live Map with real Geofencing */}
+                <LiveMap
+                    currentLat={telemetry.lat}
+                    currentLng={telemetry.lng}
+                    isImmobilized={immobilizerActive}
+                    onGeofenceBreach={(shouldImmobilize) => {
+                        if (shouldImmobilize && !immobilizerActive) {
+                            handleImmobilizerToggle(true);
+                        }
+                    }}
+                />
             </div>
         </div>
     );
